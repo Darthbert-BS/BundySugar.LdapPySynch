@@ -172,3 +172,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+#env and secrets
+.env
+.secrets
+
+#vscode
+.vscode

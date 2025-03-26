@@ -454,7 +454,7 @@ LdapDbSync {
 
         System.out.println("Syncing group membership...");
         String qryDrop = "DELETE FROM LDAP_USER_GROUPS";
-        String qryClean = "delete from ldap_user_groups where user_dn not in ( select distinguishedname from ldap_sync )";
+        // ALB NOT USED String qryClean = "delete from ldap_user_groups where user_dn not in ( select distinguishedname from ldap_sync )";
 
         CallableStatement stmtWhenChanged = null;
         CallableStatement stmtInsert = null;
@@ -479,7 +479,7 @@ LdapDbSync {
 
             DirContext ctx = new InitialDirContext(env);
             String filter = "(objectClass=group)";          //LDAP search filter
-            String[] attrIDs = { "member;range=0-999" };    //Attributes to return
+            String[] attrIDs = { "member; range=0-999" };    //Attributes to return
             SearchControls ctls = new SearchControls();
             ctls.setReturningAttributes(attrIDs);
 
@@ -535,7 +535,7 @@ LdapDbSync {
                     newMembers = new ArrayList();
                     while(li.hasNext()) {
                         String member = (String)li.next();
-                        if (  hGroups.get(member) != null ) {   // is this member a group?
+                        if (hGroups.get(member) != null ) {   // is this member a group?
                             newMembers.addAll( (ArrayList)hGroups.get(member) );
                             retry = true;
                         } else {
@@ -547,8 +547,6 @@ LdapDbSync {
                     }
                 }
             }
-
-
 
             // Now push the data to the database
             String qryInsert = "INSERT INTO LDAP_USER_GROUPS (USER_DN, GROUP_DN ) VALUES (?,?)";
@@ -578,16 +576,10 @@ LdapDbSync {
 
                     }
                 }
-                //System.out.println( "  Group " + group + " : " + cntGroupMembers + " members");
             }
             stmtInsert.close();
             System.out.println("  " + cntInserts + " records.");
 
-            //stmtClean = dbh.prepareCall(qryClean);
-            //stmtClean.execute();
-            //stmtClean.close();
-
-            
             ctx.close();
             dbh.commit();
 

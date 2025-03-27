@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD046 -->
 <!-- omit in toc -->
 # LDAP Synchronizer
 
@@ -54,8 +55,8 @@ The application relies on the correct installation of `Oracle InstantClient`. Th
 
 The python libraries the application depend upon are defined in the [requirements.txt](./requirements.txt) file. To install them run:
 
-```sh
-    pip install -r requirements.txt
+```bash
+pip install -r requirements.txt
 ```
 
 ### Dependency Description

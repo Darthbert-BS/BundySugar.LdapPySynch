@@ -5,6 +5,39 @@ from dotenv import load_dotenv
 from constants import ERROR_SYNCHRONIZATION, LDAP_SERVER_LIST, LDAP_SYNC_VERBOSITY, LOG_FILE
 from sync_service import LdapSynchronizer
 
+"""
+ *
+ * Python port of Malcolm Byrne's LdapDbSync.java 
+ *
+ * Synchronise LDAP data from Active Directory to the IT Database.
+ *
+ * $Id: LDAP PySync v1.0 2025/03/25  $
+ *
+ * @version 1.0.0
+ * @author Alberto L. Bonfiglio
+ * @since 1.0.0
+ *
+ * Synchronize data from Active Directory Servers to the following tables:
+ *
+ *     LDAP_SYNC
+ *     LDAP_GROUPS
+ *     LDAP_USER_GROUPS
+ *
+ * This program does lazy sync, (delete all, then repopulate). Please don't
+ * run this too frequently as it will stress the database!
+ * Please consult the Readme.md for more information.
+ *
+ *  Database activity is summarised as:
+ *
+ *      Table               Purpose                 Actions
+ *      LDAP_SYNC           User details            Mass delete then mass insert.
+ *      LDAP_GROUPS         AD groups               Mass delete then mass insert.
+ *      LDAP_USER_GROUPS    User group membership   Mass delete then mass insert.
+ *
+ *
+ *  Changes:
+ *
+ """
 if __name__ == "__main__":
     #loads the environment variables
     load_dotenv(".config")

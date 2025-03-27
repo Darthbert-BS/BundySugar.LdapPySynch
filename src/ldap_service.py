@@ -1,132 +1,124 @@
 import os
 from ldap3 import SUBTREE,Server, Connection, ALL
+from constants import *
 
-ERROR_LDAP_CONNECTION = 200
-ERROR_LDAP_SEARCH_USERS = 210
-ERROR_LDAP_SEARCH_GROUPS = 220
-
-USER_ATTRIBUTES = [
-     'samAccountName', 'sn', 'givenName', 'displayName', 'distinguishedName', 'title'
-    ,'physicalDeliveryOfficeName', 'mail', 'telephoneNumber', 'mobile'
-    ,'department', 'manager', 'description' 
-    ,'mDBOverQuotaLimit','mDBStorageQuota', 'mDBUseDefaults', 'vasco-Locked' 
-    ,'lastLogonTimestamp', 'pwdLastSet', 'whenCreated', 'whenChanged' 
-    ,'extensionAttribute1', 'accountExpires','userAccountControl', 
-] 
-
-GROUP_ATTRIBUTES = [
-    "samAccountname", "displayName", "distinguishedName",
-    "description", "whenChanged", "member", "managedBy"
-] 
-
-MAX_LOOP_DEPTH = 4
 
 class LdapService:
     def __init__(self, logger):
         self.logger = logger
         self.ldapConnection = None
+        self._prefix = None
 
 
-    def connect(self, prefix='BS'):
+    def connect(self, prefix: str = 'BS') -> None:
+        """
+        Connect to the specified LDAP server.
+        """
         try:
             self._prefix = prefix
-            self.logger.info("")
-            self.logger.info(f"[{self._prefix}] Connecting to LDAP Server")
+            server_url = os.getenv(f"LDAP_{prefix}_Server")
+            server_port = int(os.getenv(f"LDAP_{prefix}_Port", 389))
+            username = os.getenv(f"LDAP_{prefix}_Username")
+            password = os.getenv(f"LDAP_{prefix}_Password")
 
-            server = Server(
-                os.getenv(f"LDAP_{prefix}_Server"), 
-                port=int(os.getenv(f"LDAP_{prefix}_Port", 389)), 
-                get_info=ALL
-            )            
-            
+            self.logger.info(f'[{self.domain_name()}] Connecting to LDAP Server: {server_url}:{server_port}')
+
+            server = Server(server_url, port=server_port, get_info=ALL)
             self.ldapConnection = Connection(
-                server, 
-                user=os.getenv(f"LDAP_{prefix}_Username"), 
-                password=os.getenv(f"LDAP_{prefix}_Password"),
-                return_empty_attributes=True,
-                auto_bind=True
+                server, user=username, password=password, return_empty_attributes=True, auto_bind=True
             )
-            
-            self.logger.info(f"[{self._prefix}] {self.ldapConnection}") 
-            self.logger.info(f"[{self._prefix}] {self.ldapConnection.extend.standard.who_am_i()}")
-            self.logger.info(f"[{self._prefix}] LDAP Connection established...")
+
+            self.logger.info(f'[{self.domain_name()}] LDAP Connection established...')
 
         except Exception as error:
-            self.logger.error(f"[{self._prefix}] Error connecting to LDAP", error)
-            exit(ERROR_LDAP_CONNECTION)    
+            self.logger.error(f'[{self.domain_name()}] Error connecting to LDAP Server: {server_url}:{server_port}', error)
+            exit(ERROR_LDAP_CONNECTION)
+
+
+    def domain_name(self, prefix:str = None):
+        """Returns the domain name for the specified LDAP prefix."""
+        if prefix:
+            ldap_prefix = prefix
+        elif self._prefix:
+            ldap_prefix = self._prefix
+        else:
+            raise ValueError("No prefix provided")
+
+        return os.getenv(f"LDAP_{ldap_prefix}_Username").split(',dc=')[1]
 
 
     def get_users(self):
-        object_class= 'person' 
-        server_name = os.getenv(f"LDAP_{self._prefix}_Username").split(',dc=')[1] 
-        search_base = f'cn=users,dc={server_name},dc=com,dc=au'
+        """
+        Retrieve all users from the LDAP directory.
+        Excludes any users with empty samAccountName or sn.
+        """
+        object_class = 'person'
+        search_base = f'cn=users,dc={self.domain_name()},dc=com,dc=au'
         search_filter = f'(&(objectcategory={object_class})(objectclass=user)(samAccountName=*)(sn=*))'
-
-        self.logger.info(f"[{self._prefix}] Searching LDAP Users for:{search_base} with filter: {search_filter}")
 
         try:
             self.ldapConnection.search(
-                search_base, 
+                search_base,
                 search_filter=search_filter,
                 attributes=USER_ATTRIBUTES,
-                search_scope = SUBTREE,
+                search_scope=SUBTREE,
                 get_operational_attributes=True
             )
-            self.logger.info(f'[{self._prefix}] Found {len(self.ldapConnection.entries)} user entries.')
-                
-            return self.ldapConnection.entries   
+            return self.ldapConnection.entries
         except Exception as error:
-            self.logger.error(f"[{self._prefix}] Error searching Users", error)
+            self.logger.error(f"[{self._prefix}] Error retrieving Users", error)
             exit(ERROR_LDAP_SEARCH_USERS)
 
 
-    def get_groups(self):
-        object_class= 'group' 
-        server_name = os.getenv(f"LDAP_{self._prefix}_Username").split(',dc=')[1] 
-        search_base = f'dc={server_name},dc=com,dc=au'
+    def get_groups(self, max_depth: int = MAX_LOOP_DEPTH):
+        """Retrieve all groups from the LDAP directory."""
+        object_class = 'group'
+        search_base = f'dc={self.domain_name()},dc=com,dc=au'
         search_filter = f'(&(objectclass={object_class})(samAccountName=*))'
 
-        self.logger.info(f"[{self._prefix}] Searching LDAP Groups for:{search_base} with filter: {search_filter}")
         try:
             self.ldapConnection.search(
-                search_base, 
+                search_base,
                 search_filter=search_filter,
                 attributes=GROUP_ATTRIBUTES,
-                search_scope = SUBTREE,
+                search_scope=SUBTREE,
                 get_operational_attributes=True
             )
-           
-            self.logger.info(f'[{self._prefix}] Found {len(self.ldapConnection.entries)} group entries.')
-            
+
             return {
                 'groups': self.ldapConnection.entries,
-                'userGroups': self._get_group_members(self.ldapConnection.entries)
+                'userGroups': self._get_group_members(self.ldapConnection.entries, max_depth)
             }
-            
-        except Exception as error:
-            self.logger.error(f"[{self._prefix}] Error searching LDAP Groups:", error)
-            exit(ERROR_LDAP_SEARCH_GROUPS)
-    
 
-    def _get_group_members(self, entries ):
+        except Exception as error:
+            self.logger.error(f"[{self._prefix}] Error Retrieving LDAP Groups:", error)
+            exit(ERROR_LDAP_SEARCH_GROUPS)
+
+
+
+    def _get_group_members(self, entries: list, max_depth: int = MAX_LOOP_DEPTH) -> dict:
+        """
+        Retrieves members of the given groups and expands nested groups.
+
+        :param entries: List of group entries
+        :param max_depth: Maximum recursion depth for nested groups
+        :return: Dictionary of group DNs to their members
+        """
         try:
-            # gets the groups               
-            groups_hash_table = self._get_groups_hash(entries)
-            # expands them recursively
-            expanded_groups = self._expand_nested_groups(groups_hash_table)
-            self.logger.info(f'[{self._prefix}] Found {len(expanded_groups)} group member entries.')
+            groups_hash = self._get_groups_hash(entries)
+            expanded_groups = self._expand_nested_groups(groups_hash, max_depth)
             return expanded_groups
 
         except Exception as error:
-            self.logger.error(f"[{self._prefix}] Error searching LDAP Groups Members", error)
+            self.logger.error(f"Error searching LDAP Groups Members: {error}")
             exit(ERROR_LDAP_SEARCH_GROUPS)
 
 
+
     def _get_groups_hash(self, entries):
+        """Create a dictionary of group DNs to their members."""
         groups_hash_table = {}
         for entry in entries:
-            # Get the Distinguished Name of the group and 
-            # Initialize an empty list for this group's members
             group_dn = entry.entry_dn
             groups_hash_table[group_dn] = set()
 
@@ -140,13 +132,14 @@ class LdapService:
                             members = entry[attr_name]
                             # Add each member to the group's set
                             groups_hash_table[group_dn].update(str(member) for member in members)
+                
                 except Exception as e:
                     self.logger.warn(f"[{self._prefix}] Problem processing attributes for {group_dn}: {e}")
 
         return groups_hash_table
 
 
-    def _expand_nested_groups(self, groups_hash, max_depth=MAX_LOOP_DEPTH):
+    def _expand_nested_groups(self, groups_hash, max_depth: int = MAX_LOOP_DEPTH):
         """
         Expand nested groups in the given dictionary of groups and their members.
         
@@ -183,6 +176,7 @@ class LdapService:
         self.logger.info(f'[{self._prefix}] Flattened to {len(array)} member entries.')
         return array        
 
+
     def _compare_group_changes(self, original_groups, expanded_groups):
         """
         Compare original and expanded group memberships and return differences.
@@ -218,7 +212,9 @@ class LdapService:
         return changes
 
 
+
     def disconnect(self):
-        self.ldapConnection.unbind()    
-        self.logger.info(f"[{self._prefix}] LDAP Connection closed...")
+        self.ldapConnection.unbind()
+        self.logger.info(f"[{self.domain_name()}] LDAP Connection closed...")
+        self._prefix = None    
 

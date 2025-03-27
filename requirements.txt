@@ -2,9 +2,7 @@
 python-dotenv
 
 # Pick one of the libraries. Ldap3 seems to have less dependencies
-python-ldap
 ldap3
 
 #connection libraries. Only cx-oracle is version bound
-pyodbc
 cx-oracle==8.3.0

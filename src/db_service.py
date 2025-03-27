@@ -3,62 +3,15 @@ import cx_Oracle
 import os
 from datetime import datetime, timezone
 
-ERROR_SYSTEM = 100
-ERROR_DATABASE_CONNECTION = 1000
-ERROR_DATABASE_INSERT = 1010
+from constants import *
 
-sql_user_verify = "SELECT COUNT(*) FROM HELPDESK.LDAP_SYNC WHERE <FIELD HERE> LIKE :domain'"
-sql_group_verify = "SELECT COUNT(*)  FROM HELPDESK.LDAP_GROUPS WHERE <FIELD HERE> LIKE :domain"
-sql_user_groups_verify = "SELECT COUNT(*)  FROM HELPDESK.LDAP_USER_GROUPS WHERE <FIELD HERE> LIKE :domain"
-
-sql_user_delete = "DELETE FROM HELPDESK.LDAP_SYNC"
-sql_group_delete = "DELETE FROM HELPDESK.LDAP_GROUPS"
-sql_user_groups_delete = "DELETE FROM HELPDESK.LDAP_USER_GROUPS"
-
-sql_user_insert = """
-    INSERT INTO HELPDESK.LDAP_SYNC (
-        SAMACCOUNTNAME, SN, GIVENNAME,
-        LASTLOGONTIMESTAMP, PHYSICALDELIVERYOFFICENAME, TITLE,
-        WHENCHANGED, DEPARTMENT, MANAGER,
-        MAIL, MOBILE, DISPLAYNAME,
-        TELEPHONENUMBER, USERACCOUNTCONTROL, DESCRIPTION, DISTINGUISHEDNAME,
-        MDBOVERQUOTALIMIT, MDBSTORAGEQUOTA, MDBUSEDEFAULTS, VASCOLOCKED,
-        PWDLASTSET, WHENCREATED, EXTENSIONATTRIBUTE1, ACCOUNTEXPIRES,
-        DOMAIN
-    )
-    VALUES (
-        :sam, :sn, :given,
-        :lastlogOn, :physycal, :title, 
-        :whenChanged, :department, :manager, 
-        :mail, :mobile, :displayName,
-        :telephone, :uacc, :description, :distinguishedName, 
-        :mdbo, :mdbs, :mdbu, :vasco, 
-        :pwdLastSet, :whenCreated, :extensionAttr, :acctExpires,
-        :domain
-        )
-"""
-
-sql_group_insert ="""
-    INSERT INTO HELPDESK.LDAP_GROUPS ( 
-        NAME, DISTINGUISHEDNAME, DESCRIPTION, 
-        WHENCHANGED, DISPLAYNAME, MANAGEDBY
-    ) VALUES (
-        :groupName, :distinguishedName, :description,
-        :whenChanged, :displayName, :managedBy
-    )
-"""
-
-sql_user_groups_insert ="""
-    INSERT INTO HELPDESK.LDAP_USER_GROUPS (USER_DN, GROUP_DN) 
-    VALUES (:user_dn, :group_dn)
-"""
 
 class dbService:
-    _has_pending_transaction = False
-
+    
     def __init__(self, logger):
         self.logger = logger
         self.oracleConnection = None
+        self._has_pending_transaction = False
 
 
     def _ldap_time_to_oracle_number(self, ldap_time):
@@ -89,8 +42,8 @@ class dbService:
         """
         try:
             cx_Oracle.init_oracle_client(
-                lib_dir=os.getenv("ORACLE_LIB_DIR"),
-                config_dir=os.getenv("ORACLE_TNS_DIR")
+                lib_dir=os.getenv("ORACLE_LIB_DIR", ORACLE_LIB_DIR),
+                config_dir=os.getenv("ORACLE_TNS_DIR", ORACLE_TNS_DIR)
             )
         except Exception as e:
             if "Oracle Client library has already been initialized" in str(e):
@@ -109,25 +62,16 @@ class dbService:
                 password=os.getenv("DB_Password"),
                 dsn=os.getenv("DB_Name"),
             )
-            #self.oracleConnection.outputtypehandler = lambda cursor, name, defaultType, size, precision, scale: defaultType if defaultType != cx_Oracle.DATETIME else datetime
             self.oracleConnection.outputtypehandler = dbService._output_type_handler
             self.oracleConnection.autocommit = False
             self._has_pending_transaction = True
+            
             self.logger.info(f"Oracle Connection to {os.getenv('DB_Name')} established...")
             self.logger.info(f"Oracle Transaction initialized...")
 
         except Exception as error:
             self.logger.error(f"Error connecting to Oracle: {sys.exc_info()[1]}", error)
             exit(ERROR_DATABASE_CONNECTION)  
-
-
-    def _output_type_handler(cursor, name, defaultType, size, precision, scale):
-        if defaultType == cx_Oracle.DATETIME:
-            return cursor.var(cx_Oracle.DATETIME, arraysize=cursor.arraysize)
-        if defaultType == cx_Oracle.NUMBER:
-            return cursor.var(cx_Oracle.NUMBER, arraysize=cursor.arraysize)
-        return None
-
 
 
     def clear_tables(self):
@@ -137,14 +81,14 @@ class dbService:
             # Create a cursor
             with self.oracleConnection.cursor() as cursor: 
                 # Execute the parameterized query
-                cursor.execute(sql_user_delete)
-                cursor.execute(sql_group_delete)
-                cursor.execute(sql_user_groups_delete)
+                cursor.execute(SQL_USERS_DELETE)
+                cursor.execute(SQL_GROUPS_DELETE)
+                cursor.execute(SQL_USER_GROUPS_DELETE)
 
             self.logger.info(f"Tables cleared successfully")
 
         except cx_Oracle.Error as error:
-            self.get_stack_trace(error)
+            self._get_stack_trace(error)
 
         except Exception as error:
             self.logger.error(f"An Error occurred in clear_tables: {sys.exc_info()[1]}", error)
@@ -156,7 +100,6 @@ class dbService:
             # Create a cursor
             with self.oracleConnection.cursor() as cursor:
                 for entry in entries:
-                    #self.logger.info(f'[{server}] Storing User: {entry}') 
                     entryParams = {
                         'sam': entry.samAccountName.value,
                         'sn': entry.sn.value,
@@ -184,13 +127,16 @@ class dbService:
                         'acctExpires': self._ldap_time_to_oracle_number(entry.accountExpires.value),
                         'domain': server
                     }
-                    cursor.execute(sql_user_insert, entryParams)
+                    cursor.execute(SQL_USER_INSERT, entryParams)
 
-            if self._verify_inserted_rows(server, sql_user_verify, len(entries)):
-                self.logger.info(f"[{server}] User data inserted successfully")
+            verify = self._verify_inserted_rows(server, SQL_USERS_VERIFY, len(entries))
+            if verify['match']: 
+                self.logger.info(f"[{server}] User data inserted: [{verify['inserted']}] match expected: [{verify['expected']}]")
+            else:
+                self.logger.warn(f"[{server}] User data inserted: [{verify['inserted']}] does NOT match expected: [{verify['expected']}]")                
 
         except cx_Oracle.Error as error:
-            self.get_stack_trace(error)
+            self._get_stack_trace(error)
             
         except Exception as error:
             self.logger.error(f"An Error occurred in synchronize_users: {sys.exc_info()[1]}", error)
@@ -212,13 +158,16 @@ class dbService:
                         'displayName': entry.displayName.value,
                         'managedBy': entry.managedBy.value,
                     }
-                    cursor.execute(sql_group_insert, entryParams)
+                    cursor.execute(SQL_GROUP_INSERT, entryParams)
 
-            if self._verify_inserted_rows(server, sql_group_verify, len(entries)):
-                self.logger.info(f"[{server}] Group data inserted successfully")
+            verify = self._verify_inserted_rows(server, SQL_GROUPS_VERIFY, len(entries))
+            if verify['match']: 
+                self.logger.info(f"[{server}] Group data inserted: [{verify['inserted']}] match expected: [{verify['expected']}]")
+            else:
+                self.logger.warn(f"[{server}] Group data inserted: [{verify['inserted']}] does NOT match expected: [{verify['expected']}]")                
 
         except cx_Oracle.Error as error:
-            self.get_stack_trace(error)
+            self._get_stack_trace(error)
 
         except Exception as error:
             self.logger.error(f"An Error occurred in synchronize_groups: {sys.exc_info()[1]}", error)
@@ -227,29 +176,44 @@ class dbService:
 
 
     def synchronize_group_members(self, server, entries): 
-        try: 
+        try:  
             # Create a cursor
             with self.oracleConnection.cursor() as cursor:
                 count = 0
                 for group_dn, members in entries.items():
                     for member in members:                
-                        #self.logger.info(f'[{server}] Storing User: [{member}] for Group: [{group_dn}]' ) 
                         entryParams = {
                             'user_dn': member,
                             'group_dn': group_dn
                         }
-                        cursor.execute(sql_user_groups_insert, entryParams)
+                        cursor.execute(SQL_USER_GROUP_INSERT, entryParams)
                         count += 1
                 
-            if self._verify_inserted_rows(server, sql_user_groups_verify, count):                
-                self.logger.info(f"[{server}] User Groups data inserted successfully")
+            verify = self._verify_inserted_rows(server, SQL_USER_GROUPS_VERIFY, count)                   
+            if verify['match']: 
+                self.logger.info(f"[{server}] User Groups data inserted: [{verify['inserted']}] match expected: [{verify['expected']}]")
+            else:
+                self.logger.warn(f"[{server}] User Groups data inserted: [{verify['inserted']}] does NOT match expected: [{verify['expected']}]")
 
         except cx_Oracle.Error as error:
-            self.get_stack_trace(error)
+            self._get_stack_trace(error)
 
         except Exception as error:
             self.logger.error(f"An Error occurred in synchronize_groups: {sys.exc_info()[1]}", error)
             exit(ERROR_SYSTEM)  
+
+
+    def disconnect(self):
+        if self.oracleConnection:
+            if self._has_pending_transaction:
+                self.oracleConnection.commit()
+                self._has_pending_transaction = False
+                self.logger.info("Oracle Transaction committed...")
+            
+            if self._is_connection_open(self.oracleConnection):
+                self.oracleConnection.close()
+                self.logger.info("Oracle Connection closed...")
+
 
 
     def _verify_inserted_rows(self, server, qry, expected):
@@ -257,25 +221,27 @@ class dbService:
             # Create a cursor
             with self.oracleConnection.cursor() as cursor:
                 params = {
-                    'domain': f'%{server}%'
+                    'domain': str.upper(f"%DC={server}%")
                 }
                 cursor.execute(qry, params)
                 result = cursor.fetchone()
-            
-            self.logger.info(f"[{server}] Data inserted {result[0]}, expected {expected}")
-            return expected == result[0]
 
+            return { 
+                'inserted': result[0],
+                'expected': expected,
+                'match': result[0] == expected
+            }
+        
         except cx_Oracle.Error as error:
             self.get_stack_trace(error)
-            return False
 
         except Exception as error:
             self.logger.error(f"An Error occurred in verify_inserted_rows: {sys.exc_info()[1]}", error)
-            return False
+            exit(ERROR_SYSTEM)  
         
         
 
-    def get_stack_trace(self, error): 
+    def _get_stack_trace(self, error): 
         
         error_obj, = error.args
         self.logger.error("Oracle Error:")
@@ -310,7 +276,7 @@ class dbService:
         exit(ERROR_DATABASE_INSERT)
 
 
-    def is_connection_open(self, connection):
+    def _is_connection_open(self, connection):
         try:
             # Attempt to ping the database
             connection.ping()
@@ -318,15 +284,13 @@ class dbService:
         except cx_Oracle.Error:
             # If ping fails, the connection is closed or invalid
             return False
-    
 
-    def disconnect(self):
-        if self.oracleConnection:
-            if self._has_pending_transaction:
-                self.oracleConnection.commit()
-                self._has_pending_transaction = False
-                self.logger.info("Oracle Transaction committed...")
-            
-            if self.is_connection_open(self.oracleConnection):
-                self.oracleConnection.close()
-                self.logger.info("Oracle Connection closed...")
+
+    def _output_type_handler(cursor, name, defaultType, size, precision, scale):
+        if defaultType == cx_Oracle.DATETIME:
+            return cursor.var(cx_Oracle.DATETIME, arraysize=cursor.arraysize)
+        if defaultType == cx_Oracle.NUMBER:
+            return cursor.var(cx_Oracle.NUMBER, arraysize=cursor.arraysize)
+        return None
+
+

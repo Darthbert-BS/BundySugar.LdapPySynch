@@ -176,6 +176,7 @@ cython_debug/
 #env and secrets
 .env
 .secrets
+.config
 
 #vscode
 .vscode

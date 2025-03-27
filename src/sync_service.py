@@ -1,35 +1,37 @@
 import sys
+from constants import ERROR_SYNCHRONIZATION
 from db_service import dbService
 from ldap_service import LdapService
 
-ERROR_SYNCHRONIZATION = 1000
+
 
 class LdapSynchronizer:
     def __init__(self, servers, logger):
         self._ldap_Servers  = servers
-        self.db = dbService(logger);
+        self._db = dbService(logger);
+        self._ldap = None
         self.logger = logger
-    
+        
         
     def synchronize(self):
         self.logger.info('Starting synchronization process...')
         try:
-            self.db.connect()
-            self.db.clear_tables()
+            self._db.connect()
+            self._db.clear_tables()
 
             for server in self._ldap_Servers:
-                self.logger.info(f'[{server}] Starting Synchronization run...')
-                ldap = LdapService(self.logger);  
-                ldap.connect(server)
-                self.db.synchronize_users(server, ldap.get_users()) 
-                result = ldap.get_groups()
-                self.db.synchronize_groups(server, result['groups'])
-                self.db.synchronize_group_members(server, result['userGroups']) 
+                self.logger.info(f'Starting Synchronization run for {server}...')
+                self._ldap = LdapService(self.logger);  
+                self._ldap.connect(server)
+                self._db.synchronize_users(self._ldap.domain_name(), self._ldap.get_users()) 
+                result = self._ldap.get_groups()
+                self._db.synchronize_groups(self._ldap.domain_name(), result['groups'])
+                self._db.synchronize_group_members(self._ldap.domain_name(), result['userGroups']) 
                 
-                ldap.disconnect()
-                self.logger.info(f'[{server}] synchronized.') 
+                self._ldap.disconnect()
+                self.logger.info(f'Synchronization run for {server} complete.') 
             
-            self.db.disconnect()    
+            self._db.disconnect()    
             self.logger.info('Synchronization process complete.')
         
         except Exception as error:
@@ -39,5 +41,5 @@ class LdapSynchronizer:
 
         finally:
             # clean up
-            self.db.disconnect()
+            self._db.disconnect()
       
